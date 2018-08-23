@@ -16,8 +16,10 @@ use futures::future::{join_all, loop_fn, ok, result, Future, Loop};
 use hyper::Client;
 use std::{io::{self, stdin, BufRead},
           sync::{Arc, Mutex},
-          time::{Duration, SystemTime}};
-use tokio::runtime::Runtime;
+          time::{Duration, Instant, SystemTime}};
+use tokio::{runtime::Runtime, timer::Delay};
+
+// example usage: `for x in $(seq 0 10); do echo /dicej; done | ./stress http://192.168.2.176 10000`
 
 // TODO: there may be a library out there that does this for us
 fn millis(n: Duration) -> u64 {
@@ -85,6 +87,12 @@ fn run(matches: ArgMatches) -> Result<(), Error> {
 
                                     Loop::Continue(number + 1)
                                 }
+                            })
+                            .or_else(move |e| {
+                                error!("error: {:?}", e);
+                                Delay::new(Instant::now() + Duration::from_millis(100))
+                                    .map_err(Error::from)
+                                    .map(move |_| Loop::Continue(number + 1))
                             }),
                     ) as F
                 } else {

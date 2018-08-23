@@ -6,6 +6,8 @@ authors = ["Joel Dice <joel.dice@gmail.com>"]
 [dependencies]
 tokio = "*"
 hyper = "*"
+hyper-tls = "*"
+native-tls = "*"
 futures = "0.1"
 clap = "*"
 log = "*"

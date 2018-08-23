@@ -7,13 +7,17 @@ extern crate clap;
 extern crate failure;
 extern crate futures;
 extern crate hyper;
+extern crate hyper_tls;
+extern crate native_tls;
 extern crate pretty_env_logger;
 extern crate tokio;
 
 use clap::{App, Arg, ArgMatches};
 use failure::Error;
-use futures::future::{join_all, loop_fn, ok, result, Future, Loop};
-use hyper::Client;
+use futures::future::{err, join_all, loop_fn, ok, result, Future, Loop};
+use hyper::{client::HttpConnector, Client};
+use hyper_tls::HttpsConnector;
+use native_tls::TlsConnector;
 use std::{io::{self, stdin, BufRead},
           sync::{Arc, Mutex},
           time::{Duration, Instant, SystemTime}};
@@ -24,6 +28,10 @@ use tokio::{runtime::Runtime, timer::Delay};
 // TODO: there may be a library out there that does this for us
 fn millis(n: Duration) -> u64 {
     return (n.as_secs() * 1_000) + (n.subsec_nanos() as u64 / 1_000_000);
+}
+
+fn is_incomplete(error: &hyper::Error) -> bool {
+    "parsed HTTP message from remote is incomplete" == &format!("{}", error)
 }
 
 fn run(matches: ArgMatches) -> Result<(), Error> {
@@ -38,7 +46,16 @@ fn run(matches: ArgMatches) -> Result<(), Error> {
 
     type F = Box<Future<Item = Loop<u32, u32>, Error = Error> + Send>;
 
-    let client = Client::new();
+    let client = Client::builder().build::<_, hyper::Body>({
+        let mut http = HttpConnector::new(4);
+        http.enforce_http(false);
+        HttpsConnector::from((
+            http,
+            TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()?,
+        ))
+    });
 
     struct State {
         responses: u64,
@@ -64,7 +81,15 @@ fn run(matches: ArgMatches) -> Result<(), Error> {
                             .map_err(move |_| format_err!("invalid URL: {}", url))
                             .and_then({
                                 let client = client.clone();
-                                move |uri| client.get(uri).map_err(Error::from)
+                                move |uri| {
+                                    client
+                                        .get(uri)
+                                        .map(drop)
+                                        .or_else(
+                                            |e| if is_incomplete(&e) { ok(()) } else { err(e) },
+                                        )
+                                        .map_err(Error::from)
+                                }
                             })
                             .map({
                                 let state = state.clone();
